@@ -1,0 +1,19 @@
+[package]
+name = "storage-web-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.6.18"
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+# logger
+log = "0.4"
+env_logger = "0.10"
+# serde
+serde = { version = "1", features = ["derive"] }
+# https://jorgecarleitao.github.io/arrow2/
+arrow2 = { version = "0.17.1", features = ["io_csv", "io_parquet"] }
+tokio-util = { version = "0.7.8", features = ["io"] }
+futures-util = "0.3.28"
+futures = "0.3.28"
