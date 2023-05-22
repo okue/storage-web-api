@@ -1,9 +1,11 @@
-use arrow2::{array::Array, chunk::Chunk, datatypes::Schema};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::{extract::Query, routing::get, Router};
+use datafusion::prelude::{CsvReadOptions, SessionContext};
 use serde::Deserialize;
 
 mod csv;
+mod orc;
 mod parquet;
 mod web;
 
@@ -19,41 +21,50 @@ pub enum OutputType {
 pub struct DownloadParams {
     path: String,
     output_type: Option<OutputType>,
+    sql: Option<String>,
 }
 
-pub trait Reader {
-    fn read(&self, params: &DownloadParams) -> anyhow::Result<(Chunk<Box<dyn Array>>, Schema)>;
-}
+// pub trait Reader {
+//     fn new() -> Box<dyn Reader + Send>
+//     where
+//         Self: Sized;
+//
+//     fn read(&self, params: &DownloadParams) -> anyhow::Result<(Chunk<Box<dyn Array>>, Schema)>;
+// }
+//
+// pub trait Writer {
+//     fn new() -> Self;
+//
+//     fn write<W: std::io::Write, A: AsRef<dyn Array> + Send + Sync + 'static>(
+//         &self,
+//         writer: &mut W,
+//         schema: Schema,
+//         chunks: Vec<arrow2::error::Result<Chunk<A>>>,
+//     ) -> anyhow::Result<()>;
+// }
 
-pub trait Writer {
-    fn write<W: std::io::Write, A: AsRef<dyn Array>>(
-        &self,
-        writer: &mut W,
-        schema: Schema,
-        columns: Box<[Chunk<A>]>,
-    ) -> anyhow::Result<()>;
-}
-
-// https://jorgecarleitao.github.io/arrow2/io/csv_reader.html
+// https://jorgecarleitao.github.io/arrow2/io/index.html
+#[axum_macros::debug_handler]
 async fn download(query: Query<DownloadParams>) -> Result<impl IntoResponse, web::error::AppError> {
     log::info!("path: {}", query.path);
-
-    let reader = csv::CsvReader {};
-    let (batch, schema) = reader.read(&query.0)?;
+    let reader = match query.path.split(".").last() {
+        Some("csv") => csv::CsvReader::new(),
+        Some("parquet") => {
+            // parquet::ParquetReader::new()
+            return Ok((StatusCode::BAD_REQUEST, "Unsupported file type").into_response());
+        }
+        Some(_) => return Ok((StatusCode::BAD_REQUEST, "Unsupported file type").into_response()),
+        None => return Ok((StatusCode::BAD_REQUEST, "Unknown file type").into_response()),
+    };
 
     let mut w: Vec<u8> = Vec::new();
+    // TODO: Writer が generics なので, `let writer = ...` とできない...
     match query.output_type.as_ref().unwrap_or(&OutputType::CSV) {
-        OutputType::CSV => {
-            let writer = csv::CsvWriter {};
-            writer.write(&mut w, schema, Box::new([batch]))?;
-        }
-        OutputType::TSV => return Ok("NOT IMPLEMENTED".into_response()),
-        OutputType::PARQUET => {
-            let writer = parquet::ParquetWriter {};
-            writer.write(&mut w, schema, vec![Ok(batch)])?;
-        }
+        OutputType::CSV => {}
+        OutputType::PARQUET => {}
         OutputType::ORC => return Ok("NOT IMPLEMENTED".into_response()),
-    }
+        OutputType::TSV => return Ok("NOT IMPLEMENTED".into_response()),
+    };
 
     Ok(w.into_response())
 }
@@ -72,4 +83,12 @@ async fn main() {
         .serve(app.into_make_service())
         .await
         .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn it_works() {
+        assert_eq!(2 + 2, 4);
+    }
 }

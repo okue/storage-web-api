@@ -1,4 +1,6 @@
-GET http://localhost:3000/download?path=./arrow-testing/data/csv/aggregate_test_100.csv
 ###
-GET http://localhost:3000/download?path=./arrow-testing/data/csv/aggregate_test_100.csv.gz
+GET http://localhost:3000/download?path=./arrow-testing/data/csv/aggregate_test_100.csv&sql=select c1 from t1
+
+###
+GET http://localhost:3000/download?path=./parquet-testing/data/alltypes_plain.parquet&output_type=PARQUET
 ###
