@@ -1,86 +1,73 @@
-use datafusion::arrow;
+use datafusion::arrow::csv::Writer;
 use datafusion::dataframe::DataFrame;
 use datafusion::prelude::{CsvReadOptions, SessionContext};
-use std::fs::File;
 
-use crate::DownloadParams;
+use futures_util::{StreamExt, TryStreamExt};
 
-pub(crate) struct CsvReader {}
+pub struct CsvRegisterer {}
+pub struct CsvWriter {}
 
-pub(crate) struct CsvWriter {}
-
-impl CsvReader {
-    pub(crate) fn new() -> Self {
-        CsvReader {}
+impl CsvRegisterer {
+    pub fn new() -> Self {
+        CsvRegisterer {}
     }
 
-    async fn read(&self, params: DownloadParams) -> anyhow::Result<DataFrame> {
-        let ctx = SessionContext::new();
-        ctx.register_csv("t", params.path.as_str(), CsvReadOptions::new())
+    pub async fn register(
+        &self,
+        ctx: &SessionContext,
+        table_name: &String,
+        table_location: &String,
+    ) -> anyhow::Result<()> {
+        ctx.register_csv(table_name, table_location, CsvReadOptions::default())
             .await?;
-        Ok(ctx
-            .sql(
-                params
-                    .sql
-                    .as_ref()
-                    .unwrap_or(&"select * from t".to_string()),
-            )
-            .await?)
+        Ok(())
     }
 }
 
 impl CsvWriter {
-    fn new() -> Self {
+    pub fn new() -> Self {
         CsvWriter {}
     }
 
-    fn write<W: std::io::Write>(&self, output: &mut W, df: DataFrame) -> anyhow::Result<()> {
+    pub async fn write<W: std::io::Write>(
+        &self,
+        output: &mut W,
+        df: DataFrame,
+    ) -> anyhow::Result<()> {
+        let mut writer: Writer<&mut W> =
+            datafusion::arrow::csv::writer::WriterBuilder::default().build(output);
+        self.write_internal(&mut writer, df).await
+    }
+
+    pub async fn write_tsv<W: std::io::Write>(
+        &self,
+        output: &mut W,
+        df: DataFrame,
+    ) -> anyhow::Result<()> {
+        let mut writer: Writer<&mut W> = datafusion::arrow::csv::writer::WriterBuilder::default()
+            .with_delimiter(b'\t')
+            .build(output);
+        self.write_internal(&mut writer, df).await
+    }
+
+    async fn write_internal<W: std::io::Write>(
+        &self,
+        writer: &mut Writer<&mut W>,
+        df: DataFrame,
+    ) -> anyhow::Result<()> {
+        let stream = df.execute_stream().await?;
+        stream
+            .map(|batch| writer.write(&batch?))
+            .try_collect::<Vec<_>>()
+            .await?;
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::csv::CsvReader;
-    use crate::DownloadParams;
-    use crate::OutputType::CSV;
-    use datafusion::arrow::record_batch::RecordBatch;
-    use std::fs::read;
-    use std::io::stdout;
-
-    #[tokio::test]
-    async fn read_csv() -> anyhow::Result<()> {
-        let reader = CsvReader::new();
-        let df = reader
-            .read(DownloadParams {
-                path: "./arrow-testing/data/csv/aggregate_test_100.csv".to_string(),
-                output_type: Option::from(CSV),
-                sql: Option::from("select c1, c2 from t".to_string()),
-            })
-            .await?;
-        df.show_limit(10).await?;
-
-        Ok(())
-    }
-
     #[tokio::test]
     async fn write_csv() -> anyhow::Result<()> {
-        let reader = CsvReader::new();
-        let df = reader
-            .read(DownloadParams {
-                path: "./arrow-testing/data/csv/aggregate_test_100.csv".to_string(),
-                output_type: Option::from(CSV),
-                sql: Option::from("select c1, c2 from t".to_string()),
-            })
-            .await?;
-
-        let output = stdout();
-        let record_batch_list: Vec<RecordBatch> = df.collect().await?;
-        let mut writer = datafusion::arrow::csv::writer::WriterBuilder::default().build(output);
-        for record_batch in &record_batch_list {
-            writer.write(record_batch)?;
-        }
-
         Ok(())
     }
 }

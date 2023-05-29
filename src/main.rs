@@ -1,15 +1,18 @@
+use crate::csv::CsvRegisterer;
+use crate::parquet::ParquetRegisterer;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::{extract::Query, routing::get, Router};
-use datafusion::prelude::{CsvReadOptions, SessionContext};
+use axum::{routing::get, Json, Router};
+use datafusion::prelude::{CsvReadOptions, ParquetReadOptions, SessionContext};
 use serde::Deserialize;
+use std::collections::HashMap;
 
 mod csv;
 mod orc;
 mod parquet;
 mod web;
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub enum OutputType {
     CSV,
     TSV,
@@ -17,56 +20,61 @@ pub enum OutputType {
     ORC,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct DownloadParams {
-    path: String,
+    input_tables: HashMap<String, String>,
+    sql: String,
     output_type: Option<OutputType>,
-    sql: Option<String>,
 }
 
-// pub trait Reader {
-//     fn new() -> Box<dyn Reader + Send>
-//     where
-//         Self: Sized;
-//
-//     fn read(&self, params: &DownloadParams) -> anyhow::Result<(Chunk<Box<dyn Array>>, Schema)>;
-// }
-//
-// pub trait Writer {
-//     fn new() -> Self;
-//
-//     fn write<W: std::io::Write, A: AsRef<dyn Array> + Send + Sync + 'static>(
-//         &self,
-//         writer: &mut W,
-//         schema: Schema,
-//         chunks: Vec<arrow2::error::Result<Chunk<A>>>,
-//     ) -> anyhow::Result<()>;
-// }
-
-// https://jorgecarleitao.github.io/arrow2/io/index.html
 #[axum_macros::debug_handler]
-async fn download(query: Query<DownloadParams>) -> Result<impl IntoResponse, web::error::AppError> {
-    log::info!("path: {}", query.path);
-    let reader = match query.path.split(".").last() {
-        Some("csv") => csv::CsvReader::new(),
-        Some("parquet") => {
-            // parquet::ParquetReader::new()
-            return Ok((StatusCode::BAD_REQUEST, "Unsupported file type").into_response());
+async fn download(
+    request: Json<DownloadParams>,
+) -> Result<impl IntoResponse, web::error::AppError> {
+    log::info!("path: {:?}", request.0);
+
+    let ctx = SessionContext::new();
+    for (table_name, table_path) in &request.input_tables {
+        match table_path.split(".").last() {
+            Some("csv") => {
+                CsvRegisterer::new()
+                    .register(&ctx, &table_name, &table_path)
+                    .await?
+            }
+            Some("parquet") => {
+                ParquetRegisterer::new()
+                    .register(&ctx, &table_name, &table_path)
+                    .await?
+            }
+            Some(_) => {
+                return Ok((StatusCode::BAD_REQUEST, "Unsupported file type").into_response())
+            }
+            None => return Ok((StatusCode::BAD_REQUEST, "Unknown file type").into_response()),
+        };
+    }
+
+    let df = ctx.sql(&request.sql).await?;
+
+    log::info!("dataframe schema is {}", df.schema());
+
+    let mut output: Vec<u8> = Vec::new();
+    match request.output_type.as_ref().unwrap_or(&OutputType::CSV) {
+        OutputType::CSV => {
+            log::info!("writing csv");
+            csv::CsvWriter::new().write(&mut output, df).await?;
         }
-        Some(_) => return Ok((StatusCode::BAD_REQUEST, "Unsupported file type").into_response()),
-        None => return Ok((StatusCode::BAD_REQUEST, "Unknown file type").into_response()),
-    };
-
-    let mut w: Vec<u8> = Vec::new();
-    // TODO: Writer が generics なので, `let writer = ...` とできない...
-    match query.output_type.as_ref().unwrap_or(&OutputType::CSV) {
-        OutputType::CSV => {}
-        OutputType::PARQUET => {}
+        OutputType::TSV => {
+            log::info!("writing tsv");
+            csv::CsvWriter::new().write_tsv(&mut output, df).await?;
+        }
+        OutputType::PARQUET => {
+            log::info!("writing parquet");
+            parquet::ParquetWriter::new().write(&mut output, df).await?;
+        }
         OutputType::ORC => return Ok("NOT IMPLEMENTED".into_response()),
-        OutputType::TSV => return Ok("NOT IMPLEMENTED".into_response()),
     };
 
-    Ok(w.into_response())
+    Ok(output.into_response())
 }
 
 // https://docs.rs/axum/latest/axum/

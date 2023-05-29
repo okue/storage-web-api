@@ -19,3 +19,4 @@ datafusion = { version = "24" }
 tokio-util = { version = "0.7.8", features = ["io"] }
 futures-util = "0.3.28"
 futures = "0.3.28"
+async-trait = "0.1.68"

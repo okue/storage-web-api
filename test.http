@@ -1,6 +1,25 @@
 ###
-GET http://localhost:3000/download?path=./arrow-testing/data/csv/aggregate_test_100.csv&sql=select c1 from t1
+GET http://localhost:3000/download
+Content-Type: application/json
+
+{
+  "input_tables": {
+    "t": "./arrow-testing/data/csv/aggregate_test_100.csv"
+  },
+  "sql": "select c1, avg(c2), sum(c3) from t group by c1 order by c1",
+  "output_type": "CSV"
+}
 
 ###
-GET http://localhost:3000/download?path=./parquet-testing/data/alltypes_plain.parquet&output_type=PARQUET
+GET http://localhost:3000/download
+Content-Type: application/json
+
+{
+  "input_tables": {
+    "t": "./parquet-testing/data/alltypes_tiny_pages.parquet"
+  },
+  "sql": "select * from t limit 30",
+  "output_type": "TSV"
+}
+
 ###

@@ -1,27 +1,53 @@
-use crate::DownloadParams;
-use std::fs::File;
+use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::common::DataFusionError;
+use datafusion::dataframe::DataFrame;
+use datafusion::parquet::file::properties::WriterProperties;
+use datafusion::prelude::{ParquetReadOptions, SessionContext};
 
-pub(crate) struct ParquetReader {}
+use futures_util::{StreamExt, TryStreamExt};
 
-pub(crate) struct ParquetWriter {}
+pub struct ParquetRegisterer {}
+pub struct ParquetWriter {}
 
-impl ParquetReader {
-    pub(crate) fn new() -> Self {
-        ParquetReader {}
+impl ParquetRegisterer {
+    pub fn new() -> Self {
+        ParquetRegisterer {}
     }
 
-    fn read(&self, params: &DownloadParams) -> anyhow::Result<()> {
+    pub async fn register(
+        &self,
+        ctx: &SessionContext,
+        table_name: &String,
+        table_location: &String,
+    ) -> anyhow::Result<()> {
+        ctx.register_parquet(table_name, table_location, ParquetReadOptions::default())
+            .await?;
         Ok(())
     }
 }
 
 impl ParquetWriter {
-    fn new() -> Self {
+    pub fn new() -> Self {
         ParquetWriter {}
     }
 
-    // https://jorgecarleitao.github.io/arrow2/main/guide/io/parquet_write.html
-    fn write<W: std::io::Write>(&self, writer: &mut W) -> anyhow::Result<()> {
+    pub async fn write<W: std::io::Write>(
+        &self,
+        output: &mut W,
+        df: DataFrame,
+    ) -> anyhow::Result<()> {
+        let mut writer = datafusion::parquet::arrow::ArrowWriter::try_new(
+            output,
+            SchemaRef::from(df.schema().clone()),
+            Some(WriterProperties::builder().build()),
+        )?;
+        let stream = df.execute_stream().await?;
+        stream
+            .map(|batch| writer.write(&batch?).map_err(DataFusionError::ParquetError))
+            .try_collect::<Vec<_>>()
+            .await?;
+
+        writer.close()?;
         Ok(())
     }
 }
